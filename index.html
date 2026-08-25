@@ -173,8 +173,9 @@ form textarea{min-height:88px}
 var APP_ID = "cli_aaf31d6bd8385e15";
 var TOKEN = "";
 var DEV = null;
+var LARK_AUTH = "https://open.larksuite.com/open-apis/authen/v1/index";
 var API_BASE = "https://imctvlveatnwrajrdeje.supabase.co/functions/v1/roncato-mini-app";
-var BUILD = {"version":"2026-08-25.1032","commit":"ad417a8"};
+var BUILD = {"version":"2026-08-25.1045","commit":"a62b2da"};
 var BASE = API_BASE || location.pathname.replace(/\/app\/?$/, "");
 
 var S = { me:null, tab:null, stack:[], busy:false };
@@ -234,6 +235,27 @@ function fail(err){
 function human(s){ return String(s||"").toLowerCase().replace(/_/g," "); }
 
 // ── login ───────────────────────────────────────────────
+function exchange(code, onFail){
+  api("POST","/api/lark-login",{ code: code }).then(function(d){
+    TOKEN = d.session_token; start();
+  }).catch(function(e){
+    onFail(e);
+  });
+}
+
+/**
+ * Two ways in, because there are two places this page runs.
+ *
+ * Inside the Lark client the JSSDK is injected and hands over a code without
+ * anybody typing anything. Opened from Lark web, the app arrives in an ordinary
+ * browser tab with no SDK at all — and that is not an edge case, it is how every
+ * desktop user who lives in the browser will meet it. Telling them to "open it
+ * in Lark" while they are in Lark is the kind of message people give up on.
+ *
+ * So the browser case redirects through Lark's own authorisation page and comes
+ * back with a code in the query string. Different journey, same exchange, same
+ * server-side session: identity is still Lark's to assert and ours to verify.
+ */
 function boot(){
   // The persona picker is not a runtime branch — it is not in this file at all
   // unless the server asked for it. A production page therefore contains no code
@@ -242,23 +264,42 @@ function boot(){
   // refactor.
   if(typeof pickPersona === "function"){ return pickPersona(); }
   if(TOKEN) return start();
-  if(!window.h5sdk || !window.tt){
-    return bootFail("请在 Lark 里打开",
-      "这个页面用 Lark 的免登识别你的身份，在普通浏览器里打不开。");
-  }
-  window.h5sdk.ready(function(){
-    window.tt.requestAccess({
-      appID: APP_ID, scopeList: [],
-      success: function(res){
-        api("POST","/api/lark-login",{ code: res.code }).then(function(d){
-          TOKEN = d.session_token; start();
-        }).catch(function(e){
-          bootFail("还没有你的账号", e.message || "请让 HR 把你加进员工主档。");
-        });
-      },
-      fail: function(){ bootFail("登录没有完成","请退出后重新从 Lark 打开一次。"); }
+
+  var q = new URLSearchParams(location.search);
+  var back = q.get("code");
+  if(back){
+    // Take the code out of the address bar before anything else. A single-use
+    // code sitting in history, or in a link somebody pastes, is a code somebody
+    // else can try.
+    history.replaceState(null, "", location.pathname + location.hash);
+    return exchange(back, function(e){
+      bootFail("登录没有完成", e.message || "请回到 Lark 重新打开一次。");
     });
-  });
+  }
+
+  if(window.h5sdk && window.tt){
+    return window.h5sdk.ready(function(){
+      window.tt.requestAccess({
+        appID: APP_ID, scopeList: [],
+        success: function(res){
+          exchange(res.code, function(e){
+            bootFail("还没有你的账号", e.message || "请让 HR 把你加进员工主档。");
+          });
+        },
+        fail: function(){ redirectToLark(); }
+      });
+    });
+  }
+  redirectToLark();
+}
+
+function redirectToLark(){
+  document.getElementById("bootTitle").textContent = "正在跳转到 Lark 登录…";
+  document.getElementById("bootText").textContent = "跳转后会自动回到这里。";
+  var here = location.origin + location.pathname;
+  location.replace(LARK_AUTH + "?app_id=" + encodeURIComponent(APP_ID)
+    + "&redirect_uri=" + encodeURIComponent(here)
+    + "&state=" + encodeURIComponent(location.hash.replace("#","") || "MY_WORK"));
 }
 
 function bootFail(title, text){
