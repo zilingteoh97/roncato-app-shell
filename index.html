@@ -179,7 +179,7 @@ var TOKEN = "";
 var DEV = null;
 var LARK_AUTH = "https://open.larksuite.com/open-apis/authen/v1/index";
 var API_BASE = "https://imctvlveatnwrajrdeje.supabase.co/functions/v1/roncato-mini-app";
-var BUILD = {"version":"2026-08-27.0326","commit":"4ce32a8"};
+var BUILD = {"version":"2026-08-27.0330","commit":"e72543d"};
 var BASE = API_BASE || location.pathname.replace(/\/app\/?$/, "");
 
 var S = { me:null, tab:null, stack:[], busy:false };
@@ -851,7 +851,11 @@ function admin(ws){
 function roleAdmin(){
   skeleton(2);
   api("GET","/api/admin/roles").then(function(r){
-    var slots = r.slots || [], un = r.unadmitted || [], sum = r.slot_summary || null;
+    var slots = r.slots || [], sum = r.slot_summary || null;
+    // NOT_APPROVED rows are already shown above as things waiting on a person.
+    // Repeating them here as "exists but grants nothing" is true and is noise:
+    // the same row twice reads as two problems.
+    var un = (r.unadmitted || []).filter(function(u){ return u.reason !== "NOT_APPROVED"; });
     var v = clear();
 
     var pending = [];
@@ -937,6 +941,15 @@ function roleAdmin(){
     }
 
     if(open.length){
+      // Company-wide roles first. They are five rows against a couple of hundred
+      // outlet ones, and they are the rows that unlock the rest of the app — so
+      // sorting by natural order buried HR_ADMIN past a truncation limit and
+      // made the one job worth doing first invisible.
+      open.sort(function(a,b){
+        var ag = a.scope && a.scope.outlet_code ? 1 : 0;
+        var bg = b.scope && b.scope.outlet_code ? 1 : 0;
+        return ag - bg;
+      });
       v.appendChild(el("h3",{class:"sub",style:"margin-top:16px"},["还没有人"]));
       open.slice(0,50).forEach(function(s){
         v.appendChild(el("div",{class:"exc"},[
