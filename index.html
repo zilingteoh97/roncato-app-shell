@@ -179,7 +179,7 @@ var TOKEN = "";
 var DEV = null;
 var LARK_AUTH = "https://open.larksuite.com/open-apis/authen/v1/index";
 var API_BASE = "https://imctvlveatnwrajrdeje.supabase.co/functions/v1/roncato-mini-app";
-var BUILD = {"version":"2026-08-27.0459","commit":"6d30f74"};
+var BUILD = {"version":"2026-08-27.0508","commit":"3b26671"};
 var BASE = API_BASE || location.pathname.replace(/\/app\/?$/, "");
 
 var S = { me:null, tab:null, stack:[], busy:false };
@@ -346,7 +346,7 @@ function start(){
 
 // ── chrome ──────────────────────────────────────────────
 var GLYPH = { MY_WORK:"◎", MY_TEAM:"⛢", HR:"⚑", PAYROLL:"₩", FINANCE:"✓",
-  MANAGEMENT:"◭", ADMIN:"⚙" };
+  MANAGEMENT:"◭", PEOPLE:"⚇", CONTROL:"⚙" };
 function tabs(){
   var n = document.getElementById("tabs");
   n.innerHTML = "";
@@ -375,7 +375,8 @@ function render(){
   var ws = S.me.navigation.workspaces.filter(function(w){ return w.id === S.tab; })[0];
   document.getElementById("title").textContent = ws ? ws.title : "Roncato";
   ({ MY_WORK: myWork, MY_TEAM: myTeam, HR: hrTower, PAYROLL: payroll,
-     FINANCE: payroll, MANAGEMENT: management, ADMIN: admin }[S.tab] || myWork)(ws);
+     FINANCE: payroll, MANAGEMENT: management,
+     PEOPLE: admin, CONTROL: admin }[S.tab] || myWork)(ws);
 }
 
 function moduleGrid(ws){
@@ -1266,6 +1267,51 @@ function verificationLane(v){
   }).catch(function(){ box.innerHTML = ""; });
 }
 
+// The one screen every employee has a reason to open, and the only one that is
+// about them rather than about somebody else's work. Hiding it because it had
+// not been built was the wrong trade: it is a single read.
+function myProfile(){
+  skeleton(2);
+  api("GET","/api/my/profile").then(function(r){
+    var v = clear();
+    if(r.known === false){
+      v.appendChild(el("div",{class:"card"},[
+        el("h3",null,["还没和员工档案对上"]),
+        el("div",{class:"sub"},[ r.message || "你已经登录，但还没绑定员工档案。" ])
+      ]));
+      v.appendChild(identityClaimCard());
+      v.appendChild(el("button",{class:"btn ghost",onclick:pop},["返回"]));
+      return;
+    }
+    var p = r.profile || {};
+    var rows = [
+      ["工号", p.employee_id],
+      ["姓名", p.display_name],
+      ["在职状态", p.employment_status],
+      ["部门", p.department],
+      ["职位", p.position],
+      ["门店", p.outlet_code],
+      ["入职日期", p.join_date]
+    ].filter(function(x){ return x[1]; });
+
+    v.appendChild(el("div",{class:"card"},[
+      el("h3",null,[ p.display_name || "我的档案" ]),
+      el("div",{class:"sub"},[ (p.employee_id || "") + (p.position ? (" · " + p.position) : "") ])
+    ]));
+    var box = el("div",{class:"card"},[]);
+    rows.forEach(function(x){
+      box.appendChild(el("div",{class:"rowline",style:"padding:6px 0"},[
+        el("span",{class:"sub"},[ x[0] ]),
+        el("b",null,[ String(x[1]) ])
+      ]));
+    });
+    v.appendChild(box);
+    v.appendChild(el("div",{class:"sub"},
+      ["这里只显示工作信息。证件号、银行账号、薪资不会出现在这个 App 里。"]));
+    v.appendChild(el("button",{class:"btn ghost",style:"margin-top:14px",onclick:pop},["返回"]));
+  }).catch(fail);
+}
+
 function identityAdmin(){
   skeleton(3);
   var qs = "?limit=" + IDQ.limit + "&offset=" + IDQ.offset
@@ -1474,6 +1520,7 @@ function connections(){
 }
 
 var SCREENS = {
+  MY_PROFILE: myProfile,
   ADMIN_IDENTITY: identityAdmin,
   ADMIN_ROLES: roleAdmin,
   ADMIN_WORKFORCE: workforceConfig,
