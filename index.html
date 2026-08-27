@@ -179,7 +179,7 @@ var TOKEN = "";
 var DEV = null;
 var LARK_AUTH = "https://open.larksuite.com/open-apis/authen/v1/index";
 var API_BASE = "https://imctvlveatnwrajrdeje.supabase.co/functions/v1/roncato-mini-app";
-var BUILD = {"version":"2026-08-27.0414","commit":"a3a86f0"};
+var BUILD = {"version":"2026-08-27.0419","commit":"45294a5"};
 var BASE = API_BASE || location.pathname.replace(/\/app\/?$/, "");
 
 var S = { me:null, tab:null, stack:[], busy:false };
@@ -893,10 +893,19 @@ function workforceConfig(){
       if(un.length){
         v.appendChild(el("h3",{class:"sub"},["还没分类的职位"]));
         un.forEach(function(u){
+          // A blank job title is a hole in the Employee Master, not a
+          // classification anybody can make here: there is no title to classify,
+          // and offering the button would give a person a task that can only
+          // fail validation.
+          var blank = u.position === "(blank)";
           v.appendChild(el("div",{class:"exc"},[
-            el("b",null,[ u.position ]),
-            el("div",{class:"why"},[ u.people + " 人在职，还没定义属于哪一类" ]),
-            el("button",{class:"btn primary",onclick:function(){ wcfgForm(u.position); }},
+            el("b",null,[ blank ? "职位为空" : u.position ]),
+            el("div",{class:"why"},[ blank
+              ? (u.people + " 人在职但档案里没写职位。这要回 Employee Master 补，在这里分类不了。")
+              : (u.people + " 人在职，还没定义属于哪一类") ]),
+            blank ? el("div",{class:"meta"},[
+              el("span",{class:"pill warn"},["主数据缺口"])
+            ]) : el("button",{class:"btn primary",onclick:function(){ wcfgForm(u.position); }},
               ["分类"])
           ]));
         });
