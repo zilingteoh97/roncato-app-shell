@@ -1,11 +1,11 @@
 {
-  "version": "2026-08-25.1045",
-  "source_commit": "a62b2da",
-  "built_at": "2026-08-25T10:45:45.201Z",
+  "version": "2026-08-27.0232",
+  "source_commit": "124f604",
+  "built_at": "2026-08-27T02:32:10.093Z",
   "api_base": "https://imctvlveatnwrajrdeje.supabase.co/functions/v1/roncato-mini-app",
   "lark_app_id": "cli_aaf31d6bd8385e15",
-  "bytes": 33099,
-  "sha256": "d36a6e36dd6043a3688e3e20c9a2aa880d22e65ef43a4618e29df32761259027",
+  "bytes": 42105,
+  "sha256": "2b81f76b7e3eec8bf193c7e0d5c611b9d8b4e6766b3610e77aa589e1a62f6ee6",
   "minified": false,
   "note": "Static shell only. No employee data, no credentials, no business logic."
 }

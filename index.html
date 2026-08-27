@@ -139,6 +139,10 @@ form label{display:block;font-weight:620;font-size:13.5px;margin:12px 0 5px}
 form input,form select,form textarea{width:100%;min-height:var(--tap);border:1px solid var(--line);
   border-radius:11px;padding:11px 12px;background:var(--paper);color:var(--ink);font:inherit}
 form textarea{min-height:88px}
+/* A search box outside a form still has to be tappable at the same size as one
+   inside it; the identity queue is used on a phone. */
+.btnrow input{flex:1;min-height:var(--tap);border:1px solid var(--line);
+  border-radius:10px;padding:0 12px;font:inherit;background:var(--card);color:var(--ink)}
 .hint{font-weight:400;color:var(--muted);font-size:12.5px;display:block;margin-top:3px}
 .toast{position:fixed;left:14px;right:14px;bottom:calc(76px + env(safe-area-inset-bottom));
   background:var(--ink);color:var(--paper);padding:13px 15px;border-radius:12px;z-index:9;
@@ -175,7 +179,7 @@ var TOKEN = "";
 var DEV = null;
 var LARK_AUTH = "https://open.larksuite.com/open-apis/authen/v1/index";
 var API_BASE = "https://imctvlveatnwrajrdeje.supabase.co/functions/v1/roncato-mini-app";
-var BUILD = {"version":"2026-08-25.1045","commit":"a62b2da"};
+var BUILD = {"version":"2026-08-27.0232","commit":"124f604"};
 var BASE = API_BASE || location.pathname.replace(/\/app\/?$/, "");
 
 var S = { me:null, tab:null, stack:[], busy:false };
@@ -780,7 +784,224 @@ function assignForm(slot){
   });
 }
 
+// ── Identity administration ──────────────────────────────────────────
+//
+// The screen that turns "a new person joined" into configuration instead of a
+// development task. It shows one page at a time on purpose: 584 rows in a
+// browser is both a slow screen and a copy of the employee master sitting in
+// somebody's tab.
+
+var IDQ = { offset: 0, limit: 25, q: "", link: "" };
+
+function identityAdmin(){
+  skeleton(3);
+  var qs = "?limit=" + IDQ.limit + "&offset=" + IDQ.offset
+    + (IDQ.q ? "&q=" + encodeURIComponent(IDQ.q) : "")
+    + (IDQ.link ? "&link=" + encodeURIComponent(IDQ.link) : "");
+  api("GET","/api/admin/identity" + qs).then(function(r){
+    var v = clear();
+    if(r.configured === false){
+      v.appendChild(el("div",{class:"empty"},[
+        el("b",null,["还没有已发布的花名册"]),
+        "先完成一次 Employee Master 同步。" ]));
+      return;
+    }
+    var s = r.summary;
+
+    // Four counts, never one percentage. "Linked" and "can actually sign in"
+    // are different questions and the gap between them is the work.
+    v.appendChild(el("div",{class:"count"},[
+      el("div",{class:"c"},[ el("b",null,[String(s.active_employees)]), el("span",null,["在职"]) ]),
+      el("div",{class:"c"},[ el("b",null,[String(s.interactive_ready)]), el("span",null,["可登录"]) ]),
+      el("div",{class:"c"},[ el("b",null,[String(s.unlinked)]), el("span",null,["未绑定"]) ]),
+      el("div",{class:"c"},[ el("b",null,[String(s.conflict)]), el("span",null,["冲突"]) ])
+    ]));
+
+    if(s.linked_but_unreachable > 0){
+      v.appendChild(el("div",{class:"exc"},[
+        el("b",null,[ s.linked_but_unreachable + " 人已绑定但本应用认不出" ]),
+        el("div",{class:"why"},[
+          "他们的记录来自别的 Lark 应用，本应用登录时拿到的是另一个 open_id。" +
+          "等他们打开一次本应用再重新绑定即可。" ]),
+        el("button",{class:"btn ghost",onclick:function(){
+          IDQ.link = "UNREACHABLE"; IDQ.offset = 0; identityAdmin(); }},["只看这些人"])
+      ]));
+    }
+
+    var bar = el("div",{class:"btnrow"},[
+      el("input",{placeholder:"搜工号",value:IDQ.q,oninput:function(e){
+        IDQ.q = e.target.value; }}),
+      el("button",{class:"btn ghost",onclick:function(){ IDQ.offset = 0; identityAdmin(); }},["搜索"])
+    ]);
+    v.appendChild(bar);
+
+    var filters = el("div",{class:"meta"},[]);
+    [["","全部"],["NOT_LINKED","未绑定"],["LINKED","已绑定"],
+     ["UNREACHABLE","认不出"],["CONFLICT","冲突"]].forEach(function(f){
+      filters.appendChild(el("span",{
+        class:"pill" + (IDQ.link === f[0] ? " ok" : ""),
+        onclick:function(){ IDQ.link = f[0]; IDQ.offset = 0; identityAdmin(); }},[ f[1] ]));
+    });
+    v.appendChild(filters);
+
+    if(r.items.length === 0){
+      v.appendChild(el("div",{class:"empty"},[ el("b",null,["没有符合条件的人"]), "" ]));
+    }
+    r.items.forEach(function(i){
+      v.appendChild(el("div",{class: i.link_state === "CONFLICT" ? "exc" : "card",
+        onclick:function(){ identityDetail(i.employee_id); }},[
+        el("b",null,[ i.employee_id + (i.display_name ? " · " + i.display_name : "") ]),
+        el("div",{class:"meta"},[
+          el("span",{class:"pill " + (i.interactive_ready ? "ok" : "warn")},[
+            i.link_state === "CONFLICT" ? "冲突"
+              : i.interactive_ready ? "可登录"
+              : i.link_state === "LINKED" ? "认不出" : "未绑定" ]),
+          i.department ? el("span",{class:"pill"},[ i.department ]) : null,
+          i.position ? el("span",{class:"pill"},[ i.position ]) : null
+        ]),
+        i.reason ? el("div",{class:"why"},[ i.reason ]) : null
+      ]));
+    });
+
+    var nav = el("div",{class:"btnrow"},[
+      IDQ.offset > 0 ? el("button",{class:"btn ghost",onclick:function(){
+        IDQ.offset = Math.max(0, IDQ.offset - IDQ.limit); identityAdmin(); }},["上一页"]) : null,
+      r.items.length >= IDQ.limit ? el("button",{class:"btn ghost",onclick:function(){
+        IDQ.offset += IDQ.limit; identityAdmin(); }},["下一页"]) : null
+    ]);
+    v.appendChild(nav);
+  }).catch(fail);
+}
+
+function identityDetail(employeeId){
+  push(employeeId, function(){
+    skeleton(2);
+    api("GET","/api/admin/identity/" + encodeURIComponent(employeeId)).then(function(r){
+      var v = clear();
+      var c = r.current;
+      v.appendChild(el("div",{class:"card"},[
+        el("b",null,[ employeeId ]),
+        el("div",{class:"meta"},[
+          el("span",{class:"pill " + (c.interactive_ready ? "ok" : "warn")},[
+            human(c.state) ]),
+          (c.namespaces || []).length
+            ? el("span",{class:"pill"},[ c.namespaces.join(", ") ]) : null
+        ]),
+        c.reason ? el("div",{class:"why"},[ c.reason ]) : null
+      ]));
+
+      v.appendChild(el("h3",{class:"sub",style:"margin-top:14px"},["历史"]));
+      if(r.history.length === 0){
+        v.appendChild(el("div",{class:"empty"},[ el("b",null,["还没有任何绑定记录"]), "" ]));
+      }
+      r.history.forEach(function(h){
+        v.appendChild(el("div",{class:"card"},[
+          el("b",null,[ (h.valid_from || "?") + " → " + (h.valid_to || "至今") ]),
+          el("div",{class:"meta"},[
+            el("span",{class:"pill " + (h.current ? "ok" : "")},[ h.current ? "生效中" : "已结束" ]),
+            el("span",{class:"pill"},[ h.app_code || "?" ]),
+            // Which key, never its value. A screenshot of an open_id outlives
+            // the screen it was taken from.
+            el("span",{class:"pill"},[ (h.keys || []).join(", ") || "—" ])
+          ]),
+          h.reason ? el("div",{class:"why"},[ h.reason ]) : null
+        ]));
+      });
+
+      v.appendChild(el("div",{class:"card",style:"margin-top:14px"},[
+        el("b",null,["怎么绑定"]),
+        el("div",{class:"why"},[
+          "让这位员工自己在 Lark 里打开一次本应用并提交「这是我」，" +
+          "由管理员确认后生效。这样 Lark 自己验证了身份，" +
+          "而确认那一步是人做的决定。" ]),
+        el("div",{class:"sub"},[ "系统不会按姓名或邮箱自动配对。" ])
+      ]));
+      v.appendChild(el("button",{class:"btn ghost",onclick:pop},["返回"]));
+    }).catch(fail);
+  });
+}
+
+// ── Configuration suggestions ────────────────────────────────────────
+
+function suggestions(){
+  skeleton(3);
+  Promise.all([ api("GET","/api/admin/suggestions?limit=25") ]).then(function(res){
+    var r = res[0], v = clear();
+    var counts = r.counts || {};
+    var row = el("div",{class:"count"},[]);
+    Object.keys(counts).forEach(function(k){
+      row.appendChild(el("div",{class:"c"},[
+        el("b",null,[ String(counts[k].PROPOSED || 0) ]),
+        el("span",null,[ human(k) ]) ]));
+    });
+    v.appendChild(row);
+
+    v.appendChild(el("div",{class:"card"},[
+      el("b",null,["这些只是建议"]),
+      el("div",{class:"why"},[ r.note ])
+    ]));
+
+    r.items.forEach(function(c){
+      v.appendChild(el("div",{class:"card"},[
+        el("b",null,[ c.employee_id || c.supervisor_employee_id || c.outlet_code || "?" ]),
+        el("div",{class:"meta"},[
+          el("span",{class:"pill"},[ human(c.kind) ]),
+          c.outlet_code ? el("span",{class:"pill"},[ c.outlet_code ]) : null,
+          c.role_hint ? el("span",{class:"pill"},[ c.role_hint ]) : null,
+          el("span",{class:"pill"},[ human(c.confidence) ])
+        ]),
+        el("div",{class:"why"},[ c.reason ]),
+        c.kind === "SUPERVISOR_TERRITORY"
+          ? el("div",{class:"sub"},["接受只会生成角色提议，不会授予督导权限。"]) : null,
+        el("div",{class:"btnrow"},[
+          el("button",{class:"btn primary",onclick:function(){
+            reviewCandidate(c.candidate_id, "ACCEPTED"); }},["接受"]),
+          el("button",{class:"btn ghost",onclick:function(){
+            reviewCandidate(c.candidate_id, "REJECTED"); }},["拒绝"])
+        ])
+      ]));
+    });
+  }).catch(fail);
+}
+
+function reviewCandidate(id, decision){
+  api("POST","/api/admin/suggestions/" + encodeURIComponent(id) + "/review",
+    { decision: decision }).then(function(r){
+      toast(decision === "ACCEPTED" ? "已接受（未授予任何权限）" : "已拒绝");
+      suggestions();
+    }).catch(fail);
+}
+
+// ── System connections ───────────────────────────────────────────────
+
+function connections(){
+  skeleton(3);
+  api("GET","/api/admin/connections").then(function(r){
+    var v = clear();
+    r.connections.forEach(function(c){
+      var ok = c.status === "CONNECTED";
+      v.appendChild(el("div",{class: ok ? "card" : "exc"},[
+        el("b",null,[ human(c.system) ]),
+        el("div",{class:"meta"},[
+          el("span",{class:"pill " + (ok ? "ok" : "warn")},[ human(c.status) ]),
+          c.last_verified ? el("span",{class:"pill"},[ "核对于 " + c.last_verified ]) : null
+        ]),
+        c.evidence ? el("div",{class:"why"},[ c.evidence ]) : null
+      ]));
+    });
+    v.appendChild(el("div",{class:"sub",style:"margin-top:10px"},[ r.note ]));
+  }).catch(fail);
+}
+
+var SCREENS = {
+  ADMIN_IDENTITY: identityAdmin,
+  ADMIN_SUGGESTIONS: suggestions,
+  ADMIN_CONNECTIONS: connections
+};
+
 function openModule(m){
+  var screen = SCREENS[m.id];
+  if(screen){ push(m.title, screen); return; }
   push(m.title, function(){
     var v = clear();
     v.appendChild(el("div",{class:"empty"},[
