@@ -179,7 +179,7 @@ var TOKEN = "";
 var DEV = null;
 var LARK_AUTH = "https://open.larksuite.com/open-apis/authen/v1/index";
 var API_BASE = "https://imctvlveatnwrajrdeje.supabase.co/functions/v1/roncato-mini-app";
-var BUILD = {"version":"2026-08-27.0429","commit":"0d31a5f"};
+var BUILD = {"version":"2026-08-27.0459","commit":"6d30f74"};
 var BASE = API_BASE || location.pathname.replace(/\/app\/?$/, "");
 
 var S = { me:null, tab:null, stack:[], busy:false };
@@ -382,9 +382,15 @@ function moduleGrid(ws){
   var g = el("div",{class:"mods"});
   ws.modules.forEach(function(m){
     var waiting = m.availability !== "AVAILABLE";
+    // A tile that says 打开 and opens an empty page is worse than one that says
+    // it is not built yet: the first teaches people the app is broken, the
+    // second tells them the truth. 44 of 51 module slots had no screen behind
+    // them and every one of them invited a click.
+    var built = Object.prototype.hasOwnProperty.call(SCREENS, m.id);
     g.appendChild(el("button",{
-      class: "mod" + (waiting ? " waiting" : ""),
+      class: "mod" + (!built ? " waiting" : (waiting ? " waiting" : "")),
       onclick: function(){
+        if(!built) return toast("这一块还没做。做好了会在这里打开。");
         if(waiting) return toast(m.detail || "这一块还没连上。");
         openModule(m);
       }
@@ -393,7 +399,8 @@ function moduleGrid(ws){
       // An open module with an unstaffed lane still says what it cannot finish.
       // Showing only "打开" would hide the one fact somebody needs to know
       // before they start filling a queue nobody can yet approve.
-      el("small",null,[ waiting ? (m.detail || "等待中")
+      el("small",null,[ !built ? "还没做"
+        : waiting ? (m.detail || "等待中")
         : ((m.waiting_lanes && m.waiting_lanes.length)
             ? ("打开 · 终审等 " + m.waiting_lanes.join("、"))
             : "打开") ])
