@@ -179,7 +179,7 @@ var TOKEN = "";
 var DEV = null;
 var LARK_AUTH = "https://open.larksuite.com/open-apis/authen/v1/index";
 var API_BASE = "https://imctvlveatnwrajrdeje.supabase.co/functions/v1/roncato-mini-app";
-var BUILD = {"version":"2026-08-27.0508","commit":"3b26671"};
+var BUILD = {"version":"2026-08-27.0520","commit":"905b0b8"};
 var BASE = API_BASE || location.pathname.replace(/\/app\/?$/, "");
 
 var S = { me:null, tab:null, stack:[], busy:false };
@@ -303,7 +303,7 @@ function redirectToLark(){
   var here = location.origin + location.pathname;
   location.replace(LARK_AUTH + "?app_id=" + encodeURIComponent(APP_ID)
     + "&redirect_uri=" + encodeURIComponent(here)
-    + "&state=" + encodeURIComponent(location.hash.replace("#","") || "MY_WORK"));
+    + "&state=" + encodeURIComponent(location.hash.replace("#","") || "HOME"));
 }
 
 function bootFail(title, text){
@@ -333,7 +333,7 @@ function start(){
     // being talked about instead of "open the app, then the third tab".
     var want = (location.hash || "").replace("#","");
     var ok = me.navigation.workspaces.some(function(w){ return w.id === want; });
-    S.tab = ok ? want : ((me.navigation.workspaces[0] || {}).id || "MY_WORK");
+    S.tab = ok ? want : ((me.navigation.workspaces[0] || {}).id || "HOME");
     window.addEventListener("hashchange", function(){
       var h = (location.hash || "").replace("#","");
       if(me.navigation.workspaces.some(function(w){ return w.id === h; })){
@@ -345,8 +345,8 @@ function start(){
 }
 
 // ── chrome ──────────────────────────────────────────────
-var GLYPH = { MY_WORK:"◎", MY_TEAM:"⛢", HR:"⚑", PAYROLL:"₩", FINANCE:"✓",
-  MANAGEMENT:"◭", PEOPLE:"⚇", CONTROL:"⚙" };
+var GLYPH = { HOME:"◎", PEOPLE:"⚇", ATTENDANCE:"◷", REQUESTS:"✉",
+  CONTROL:"⚙", DESIGNER:"◈", MANAGEMENT:"◭" };
 function tabs(){
   var n = document.getElementById("tabs");
   n.innerHTML = "";
@@ -374,9 +374,28 @@ function render(){
   back.hidden = true;
   var ws = S.me.navigation.workspaces.filter(function(w){ return w.id === S.tab; })[0];
   document.getElementById("title").textContent = ws ? ws.title : "Roncato";
-  ({ MY_WORK: myWork, MY_TEAM: myTeam, HR: hrTower, PAYROLL: payroll,
-     FINANCE: payroll, MANAGEMENT: management,
-     PEOPLE: admin, CONTROL: admin }[S.tab] || myWork)(ws);
+  // One destination, one renderer. PEOPLE and ATTENDANCE are their tiles;
+  // CONTROL adds the governance queue above its tiles; HOME and MANAGEMENT are
+  // pages in their own right.
+  ({ HOME: myWork, PEOPLE: workspacePage, ATTENDANCE: workspacePage,
+     CONTROL: admin, MANAGEMENT: management,
+     // Older ids, kept so a bookmarked hash still lands somewhere sensible.
+     MY_WORK: myWork, MY_TEAM: myTeam, HR: hrTower,
+     PAYROLL: payroll, FINANCE: payroll }[S.tab] || myWork)(ws);
+}
+
+// A destination whose content is the things you can open in it. No queue, no
+// policy board — those belong to the workspaces that are about them.
+function workspacePage(ws){
+  var v = clear();
+  if(!ws.modules.length){
+    v.appendChild(el("div",{class:"empty"},[
+      el("b",null,[ws.title]),
+      "这一块还没有可用的功能。"
+    ]));
+    return;
+  }
+  v.appendChild(moduleGrid(ws));
 }
 
 function moduleGrid(ws){
@@ -411,6 +430,56 @@ function moduleGrid(ws){
 }
 
 // ── my work ─────────────────────────────────────────────
+// ── my profile ──────────────────────────────────────────
+//
+// The most basic thing an app owes somebody: their own record. It existed as a
+// backend route and a dead tile for the entire build, and for the 166 people
+// with no identity link yet it is the only screen that will mean anything on
+// their first visit.
+function myProfile(){
+  skeleton(2);
+  api("GET","/api/my/profile").then(function(r){
+    var v = clear();
+    if(r.known === false){
+      v.appendChild(el("div",{class:"card"},[
+        el("h3",null,["还没有你的员工档案"]),
+        el("div",{class:"sub"},[ r.message || "你已经登录，但还没绑定到花名册里的人。" ])
+      ]));
+      v.appendChild(identityClaimCard());
+      v.appendChild(el("button",{class:"btn ghost",onclick:pop},["返回"]));
+      return;
+    }
+    var p = r.profile || {};
+    v.appendChild(el("div",{class:"card"},[
+      el("h3",null,[ p.display_name || p.employee_id || "我" ]),
+      el("div",{class:"sub"},[ [p.employee_id, p.position, p.department]
+        .filter(Boolean).join(" · ") ])
+    ]));
+    // Only what the projection actually carried. Absent fields are not rendered
+    // as blanks: an empty row reads as missing data rather than as a field this
+    // app deliberately never receives.
+    var rows = [
+      ["门店", p.outlet_code],
+      ["入职日", p.join_date],
+      ["在职状态", p.employment_status],
+      ["雇佣类型", p.employment_type],
+      ["考勤来源", p.attendance_source]
+    ].filter(function(x){ return x[1]; });
+    if(rows.length){
+      var box = el("div",{class:"card"},[ el("h3",null,["档案"]) ]);
+      rows.forEach(function(x){
+        box.appendChild(el("div",{class:"rowline",style:"margin-top:8px"},[
+          el("div",{class:"sub"},[ x[0] ]), el("div",null,[ String(x[1]) ])
+        ]));
+      });
+      v.appendChild(box);
+    }
+    v.appendChild(el("div",{class:"sub",style:"margin-top:10px"},
+      ["这里不会显示身份证、银行、薪资。需要改档案找 HR。"]));
+    v.appendChild(el("button",{class:"btn ghost",style:"margin-top:16px",onclick:pop},["返回"]));
+  }).catch(fail);
+}
+
 // ── identity self-onboarding ────────────────────────────
 //
 // Every one of the 125 people on the retail floor is unlinked today, so this is
@@ -1520,6 +1589,7 @@ function connections(){
 }
 
 var SCREENS = {
+  MY_PROFILE: myProfile,
   MY_PROFILE: myProfile,
   ADMIN_IDENTITY: identityAdmin,
   ADMIN_ROLES: roleAdmin,
