@@ -179,7 +179,7 @@ var TOKEN = "";
 var DEV = null;
 var LARK_AUTH = "https://open.larksuite.com/open-apis/authen/v1/index";
 var API_BASE = "https://imctvlveatnwrajrdeje.supabase.co/functions/v1/roncato-mini-app";
-var BUILD = {"version":"2026-08-27.0356","commit":"dd035da"};
+var BUILD = {"version":"2026-08-27.0414","commit":"a3a86f0"};
 var BASE = API_BASE || location.pathname.replace(/\/app\/?$/, "");
 
 var S = { me:null, tab:null, stack:[], busy:false };
@@ -854,6 +854,189 @@ function admin(ws){
 //
 // It leads with what is waiting on a human, then what exists and grants nothing,
 // then the slots still open.
+// ── workforce configuration ─────────────────────────────
+//
+// The four questions HR answers routinely. Classification used to live in a
+// hard-coded map, so a job title the business invented next month needed a
+// developer, a commit and a deploy; the other three had no home at all.
+//
+// Rows are superseded, never edited, so "who put this person in that store, and
+// when" still has an answer after the next change.
+var WCFG_TYPES = [
+  ["POSITION_CLASSIFICATION", "职位分类"],
+  ["EMPLOYEE_OUTLET",         "员工门店"],
+  ["OUTLET_STAFFING",         "门店编制"],
+  ["ATTENDANCE_SOURCE",       "考勤来源"]
+];
+var WCFG = { type: "POSITION_CLASSIFICATION" };
+
+function workforceConfig(){
+  skeleton(3);
+  api("GET","/api/admin/workforce-config?config_type=" + encodeURIComponent(WCFG.type))
+  .then(function(r){
+    var v = clear();
+
+    var tabs = el("div",{class:"btnrow",style:"flex-wrap:wrap;margin-bottom:10px"});
+    WCFG_TYPES.forEach(function(t){
+      tabs.appendChild(el("button",{
+        class: "btn" + (WCFG.type === t[0] ? " primary" : " ghost"),
+        onclick: function(){ WCFG.type = t[0]; workforceConfig(); }
+      },[ t[1] ]));
+    });
+    v.appendChild(tabs);
+
+    // The queue that makes a new job title a configuration task rather than a
+    // development one. One row per title: the decision is about the title, and
+    // repeating it per person turns one judgement into forty tasks.
+    var un = r.unclassified_positions || [];
+    if(WCFG.type === "POSITION_CLASSIFICATION"){
+      if(un.length){
+        v.appendChild(el("h3",{class:"sub"},["还没分类的职位"]));
+        un.forEach(function(u){
+          v.appendChild(el("div",{class:"exc"},[
+            el("b",null,[ u.position ]),
+            el("div",{class:"why"},[ u.people + " 人在职，还没定义属于哪一类" ]),
+            el("button",{class:"btn primary",onclick:function(){ wcfgForm(u.position); }},
+              ["分类"])
+          ]));
+        });
+      } else {
+        v.appendChild(el("div",{class:"card"},[
+          el("h3",null,["职位分类"]),
+          el("div",{class:"sub"},["在职人员的职位全部有分类。新职位出现时会出现在这里。"])
+        ]));
+      }
+    }
+
+    v.appendChild(el("button",{class:"btn primary",onclick:function(){ wcfgForm(""); }},
+      ["＋ 新建配置"]));
+
+    var rows = r.configs || [];
+    v.appendChild(el("h3",{class:"sub",style:"margin-top:16px"},
+      ["生效中（" + rows.length + "）"]));
+    if(!rows.length){
+      v.appendChild(el("div",{class:"sub"},["还没有这一类配置。"]));
+    }
+    rows.slice(0,60).forEach(function(c){
+      v.appendChild(el("div",{class:"card"},[
+        el("b",null,[ c.subject_key ]),
+        el("div",{class:"why"},[ wcfgDescribe(c) ]),
+        el("div",{class:"meta"},[
+          el("span",{class:"pill ok"},[ c.status ]),
+          el("span",{class:"pill"},[ c.effective_from + " 起" ]),
+          c.supersedes ? el("span",{class:"pill"},["取代了上一版"]) : null
+        ]),
+        c.reason ? el("div",{class:"sub"},[ c.reason ]) : null
+      ]));
+    });
+
+    v.appendChild(el("button",{class:"btn ghost",style:"margin-top:16px",onclick:pop},
+      ["返回"]));
+  }).catch(fail);
+}
+
+function wcfgDescribe(c){
+  var val = c.value || {};
+  if(c.config_type === "POSITION_CLASSIFICATION"){
+    return human(val.workforce_class) + (val.outlet_expectation
+      ? (" · " + human(val.outlet_expectation)) : "");
+  }
+  if(c.config_type === "EMPLOYEE_OUTLET"){
+    return val.outlet_code + " · " + human(val.assignment_type);
+  }
+  if(c.config_type === "OUTLET_STAFFING"){
+    return "计划编制 " + val.expected_headcount;
+  }
+  if(c.config_type === "ATTENDANCE_SOURCE"){
+    return human(val.state) + (val.source ? (" · " + val.source) : "");
+  }
+  return JSON.stringify(val);
+}
+
+// One form for four configuration types. The fields differ; the lifecycle —
+// validate, supersede, effective date, reason — does not.
+function wcfgForm(subject){
+  push("新建配置", function(){
+    var v = clear();
+    var type = WCFG.type;
+    v.appendChild(el("div",{class:"sub",style:"margin-bottom:6px"},[ human(type) ]));
+
+    var fields = [];
+    if(type === "POSITION_CLASSIFICATION"){
+      fields = [
+        ["subject_key","职位名称","text", subject || ""],
+        ["workforce_class","属于哪一类","select",
+          ["PROMOTER_FULL_TIME","PROMOTER_PART_TIME","PROMOTER_PIC",
+           "RETAIL_SUPERVISOR","HQ_OR_SUPPORT","UNCLASSIFIED"]]
+      ];
+    } else if(type === "EMPLOYEE_OUTLET"){
+      fields = [
+        ["subject_key","工号","text", subject || ""],
+        ["outlet_code","门店代码","text",""],
+        ["assignment_type","归属方式","select",
+          ["PRIMARY_OUTLET","TEMPORARY_SUPPORT","MULTI_OUTLET","ROSTER_BASED"]]
+      ];
+    } else if(type === "OUTLET_STAFFING"){
+      fields = [
+        ["subject_key","门店代码","text", subject || ""],
+        ["expected_headcount","计划编制","number",""]
+      ];
+    } else {
+      fields = [
+        ["subject_key","适用人群","text", subject || ""],
+        ["state","状态","select",
+          ["CONFIGURED","SOURCE_PENDING","NOT_APPLICABLE","UNKNOWN"]],
+        ["source","来源系统","text",""]
+      ];
+    }
+
+    var f = el("form",{onsubmit:function(ev){
+      ev.preventDefault();
+      var fd = new FormData(f);
+      var value = {};
+      fields.forEach(function(fl){
+        if(fl[0] === "subject_key") return;
+        var raw = fd.get(fl[0]);
+        if(raw === null || raw === "") return;
+        value[fl[0]] = (fl[2] === "number") ? Number(raw) : raw;
+      });
+      api("POST","/api/admin/workforce-config",{
+        config_type: type,
+        subject_key: fd.get("subject_key"),
+        value: value,
+        effective_from: fd.get("effective_from"),
+        reason: fd.get("reason") || null
+      }).then(function(){
+        toast("已保存并生效");
+        pop(); workforceConfig();
+      }).catch(function(e){ toast(e.message); });
+    }},[]);
+
+    fields.forEach(function(fl){
+      f.appendChild(el("label",null,[ fl[1] ]));
+      if(fl[3] === "select" || fl[2] === "select"){
+        var opts = fl[3];
+        var sel = el("select",{name:fl[0]},[]);
+        opts.forEach(function(o){ sel.appendChild(el("option",{value:o},[ human(o) ])); });
+        f.appendChild(sel);
+      } else {
+        f.appendChild(el("input",{name:fl[0],type:fl[2],
+          value: (typeof fl[3] === "string" ? fl[3] : ""),
+          required: fl[0] === "subject_key" ? "required" : null }));
+      }
+    });
+    f.appendChild(el("label",null,["从哪天起生效"]));
+    f.appendChild(el("input",{name:"effective_from",type:"date",required:"required",
+      value:new Date().toISOString().slice(0,10)}));
+    f.appendChild(el("label",null,["原因"]));
+    f.appendChild(el("input",{name:"reason",placeholder:"新店开业 / 职位调整"}));
+    f.appendChild(el("button",{class:"btn primary",type:"submit"},["保存"]));
+    f.appendChild(el("div",{class:"sub",style:"margin-top:10px"},
+      ["保存不会覆盖旧值：旧配置会被封存成历史，随时可查。"]));
+    v.appendChild(f);
+  });
+}
+
 function roleAdmin(){
   skeleton(2);
   api("GET","/api/admin/roles").then(function(r){
@@ -1277,6 +1460,9 @@ function connections(){
 var SCREENS = {
   ADMIN_IDENTITY: identityAdmin,
   ADMIN_ROLES: roleAdmin,
+  ADMIN_WORKFORCE: workforceConfig,
+  ADMIN_STORES: workforceConfig,
+  ADMIN_ATTENDANCE_SOURCES: workforceConfig,
   ADMIN_SUGGESTIONS: suggestions,
   ADMIN_CONNECTIONS: connections
 };
