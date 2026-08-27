@@ -179,7 +179,7 @@ var TOKEN = "";
 var DEV = null;
 var LARK_AUTH = "https://open.larksuite.com/open-apis/authen/v1/index";
 var API_BASE = "https://imctvlveatnwrajrdeje.supabase.co/functions/v1/roncato-mini-app";
-var BUILD = {"version":"2026-08-27.0232","commit":"124f604"};
+var BUILD = {"version":"2026-08-27.0311","commit":"4ef222f"};
 var BASE = API_BASE || location.pathname.replace(/\/app\/?$/, "");
 
 var S = { me:null, tab:null, stack:[], busy:false };
@@ -397,12 +397,67 @@ function moduleGrid(ws){
 }
 
 // ── my work ─────────────────────────────────────────────
+// ── identity self-onboarding ────────────────────────────
+//
+// Every one of the 125 people on the retail floor is unlinked today, so this is
+// the app's real front door. It asks for one thing, an employee number, and is
+// explicit that typing it proves nothing: an administrator still has to confirm
+// it. The claim never creates the mapping.
+function identityClaimCard(){
+  var box = el("div",{class:"card"},[]);
+  function render(state){
+    box.innerHTML = "";
+    if(state && state.request && state.state !== "REJECTED" && state.state !== "SUPERSEDED"){
+      var r = state.request;
+      box.appendChild(el("h3",null,["绑定申请已提交"]));
+      box.appendChild(el("div",{class:"sub"},["工号 " + r.claimed_employee_id + " · 等管理员确认"]));
+      box.appendChild(el("div",{class:"meta",style:"margin-top:8px"},[
+        el("span",{class:"pill wait"},[ human(r.state) ])
+      ]));
+      return;
+    }
+    box.appendChild(el("h3",null,["还没绑定你的员工档案"]));
+    box.appendChild(el("div",{class:"sub"},[
+      state && state.state === "REJECTED"
+        ? "上一次申请没有通过，可以重新提交。"
+        : "填你的员工工号，提交后由管理员确认。知道工号本身不等于身份证明。"
+    ]));
+    var input = el("input",{type:"text",placeholder:"员工工号",
+      autocomplete:"off",spellcheck:"false",autocapitalize:"characters"});
+    var msg = el("div",{class:"sub"},[]);
+    var btn = el("button",{class:"btn primary",onclick:function(){
+      var val = (input.value||"").trim();
+      if(!val){ msg.textContent = "请先填工号。"; return; }
+      btn.disabled = true; msg.textContent = "提交中…";
+      api("POST","/api/my/identity-request",{claimed_employee_id:val})
+        .then(function(){ return api("GET","/api/my/identity-request"); })
+        .then(render)
+        .catch(function(e){
+          btn.disabled = false;
+          msg.textContent = (e && e.message) ? e.message : "提交失败，请重试。";
+        });
+    }},["提交绑定申请"]);
+    box.appendChild(el("div",{class:"btnrow",style:"margin-top:10px"},[ input, btn ]));
+    box.appendChild(msg);
+  }
+  render(null);
+  // Show the standing claim if there already is one, so nobody submits twice.
+  api("GET","/api/my/identity-request").then(render).catch(function(){});
+  return box;
+}
+
 function myWork(ws){
   skeleton(2);
   Promise.all([ api("GET","/api/my/actions"), api("GET","/api/my/requests") ])
   .then(function(r){
     var actions = r[0].actions || [], mine = r[1].requests || [];
     var v = clear();
+
+    // Somebody signed in who is not attached to an employee record yet. This is
+    // the first screen most of the retail floor will ever see — not one of them
+    // has a Lark identity today — so it has to offer the next step rather than
+    // state the problem and stop.
+    if(S.me && S.me.in_employee_master === false) v.appendChild(identityClaimCard());
 
     v.appendChild(el("div",{class:"count"},[
       el("div",{class:"c"},[ el("b",null,[String(actions.length)]), el("span",null,["等我处理"]) ]),
@@ -672,14 +727,50 @@ function admin(ws){
   Promise.all([ api("GET","/api/admin/roles"), api("GET","/api/admin/flows") ])
   .then(function(r){
     var slots = r[0].slots || [], flows = r[1].flows || [];
+    var sum = r[0].slot_summary || null;
     var v = clear();
-    var open = slots.filter(function(s){ return s.state !== "ASSIGNED"; });
+    // Only slots somebody is actually expected to fill. A store that expects no
+    // headcount, or that the Outlet Master never mentions, is not a task — and
+    // listing every one of them is what turned this screen into 429 rows.
+    var open = slots.filter(function(s){ return s.actionable; });
+    var assigned = slots.filter(function(s){ return s.state === "ASSIGNED"; });
 
     v.appendChild(el("div",{class:"count"},[
       el("div",{class:"c"},[ el("b",null,[String(open.length)]), el("span",null,["待分配"]) ]),
-      el("div",{class:"c"},[ el("b",null,[String(slots.length - open.length)]),
+      el("div",{class:"c"},[ el("b",null,[String(assigned.length)]),
         el("span",null,["已就位"]) ])
     ]));
+
+    // Lead with the decisions. One role nobody holds anywhere is one decision
+    // affecting many outlets, not many separate tasks.
+    if (sum && sum.root_causes) {
+      sum.root_causes.forEach(function(c){
+        v.appendChild(el("div",{class:"exc"},[
+          el("b",null,[ c.remedy ]),
+          el("div",{class:"why"},[ c.affected_people === 1
+            ? "影响 1 个范围。"
+            : ("一个决定，影响 " + c.affected_people + " 个需要配人的门店。") ]),
+          el("div",{class:"meta"},[ el("span",{class:"pill warn"},[ c.code ]) ])
+        ]));
+      });
+    }
+
+    // The denominator, written down. Without it a reader cannot tell a small
+    // queue from a filtered one.
+    if (sum && sum.outlet_scoped) {
+      var os = sum.outlet_scoped;
+      v.appendChild(el("div",{class:"card"},[
+        el("h3",null,["门店角色覆盖"]),
+        el("div",{class:"meta",style:"margin-top:8px"},[
+          el("span",{class:"pill"},[ "该配 " + os.applicable ]),
+          el("span",{class:"pill ok"},[ "已配 " + os.satisfied ]),
+          el("span",{class:"pill warn"},[ "缺 " + os.missing ]),
+          el("span",{class:"pill"},[ "不适用 " + os.not_applicable ]),
+          el("span",{class:"pill"},[ "未知 " + os.applicability_unknown ])
+        ]),
+        el("div",{class:"sub"},["不适用＝该店 2026 计划人数为 0；未知＝该店不在 Outlet Master 里。两者都不是待办。"])
+      ]));
+    }
 
     open.forEach(function(s){
       v.appendChild(el("div",{class:"exc"},[
