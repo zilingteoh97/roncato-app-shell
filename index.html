@@ -179,7 +179,7 @@ var TOKEN = "";
 var DEV = null;
 var LARK_AUTH = "https://open.larksuite.com/open-apis/authen/v1/index";
 var API_BASE = "https://imctvlveatnwrajrdeje.supabase.co/functions/v1/roncato-mini-app";
-var BUILD = {"version":"2026-08-27.0330","commit":"e72543d"};
+var BUILD = {"version":"2026-08-27.0356","commit":"dd035da"};
 var BASE = API_BASE || location.pathname.replace(/\/app\/?$/, "");
 
 var S = { me:null, tab:null, stack:[], busy:false };
@@ -390,7 +390,13 @@ function moduleGrid(ws){
       }
     },[
       el("b",null,[m.title]),
-      el("small",null,[ waiting ? (m.detail || "等待中") : "打开" ])
+      // An open module with an unstaffed lane still says what it cannot finish.
+      // Showing only "打开" would hide the one fact somebody needs to know
+      // before they start filling a queue nobody can yet approve.
+      el("small",null,[ waiting ? (m.detail || "等待中")
+        : ((m.waiting_lanes && m.waiting_lanes.length)
+            ? ("打开 · 终审等 " + m.waiting_lanes.join("、"))
+            : "打开") ])
     ]));
   });
   return g;
@@ -1011,6 +1017,56 @@ function assignForm(slot){
 
 var IDQ = { offset: 0, limit: 25, q: "", link: "" };
 
+// Everything waiting on an independent verifier, and who that has to be.
+//
+// Appended asynchronously so the identity screen renders at once; a queue that
+// is usually empty should never delay the page that is usually the point.
+function verificationLane(v){
+  var box = el("div",{class:"card"},[]);
+  v.appendChild(box);
+  api("GET","/api/admin/identity/requests?state=SUBMITTED").then(function(r){
+    var rows = (r && r.requests) || [];
+    var lanes = (S.me && S.me.navigation) ? (function(){
+      var out = [];
+      (S.me.navigation.workspaces||[]).forEach(function(w){
+        (w.modules||[]).forEach(function(m){
+          if(m.id === "ADMIN_IDENTITY" && m.waiting_lanes) out = m.waiting_lanes;
+        });
+      });
+      return out;
+    })() : [];
+
+    box.innerHTML = "";
+    box.appendChild(el("h3",null,["待核验"]));
+    box.appendChild(el("div",{class:"sub"},[
+      rows.length ? (rows.length + " 条绑定申请等待独立核验。")
+        : "现在没有待核验的绑定申请。" ]));
+    if(lanes.length){
+      box.appendChild(el("div",{class:"meta",style:"margin-top:8px"},[
+        el("span",{class:"pill warn"},[ "等 " + lanes.join("、") + " 上任" ])
+      ]));
+      box.appendChild(el("div",{class:"sub"},[
+        "你可以提出绑定申请，但不能自己终审。提出人和核验人必须是两个人。" ]));
+    }
+    rows.slice(0,10).forEach(function(q){
+      box.appendChild(el("div",{class:"exc"},[
+        el("b",null,[ "工号 " + q.claimed_employee_id
+          + (q.employee_display_name ? ("（" + q.employee_display_name + "）") : "") ]),
+        el("div",{class:"why"},[
+          q.employee_exists ? ("在职状态 " + (q.employment_status || "未知"))
+            : "这个工号在花名册里找不到" ]),
+        el("div",{class:"meta"},[
+          q.claimed_employee_already_linked
+            ? el("span",{class:"pill warn"},["该员工已绑定其他账号"]) : null,
+          q.signer_already_linked_to
+            ? el("span",{class:"pill warn"},["该账号已绑到 " + q.signer_already_linked_to]) : null,
+          el("span",{class:"pill wait"},[ q.state ])
+        ])
+      ]));
+    });
+  }).catch(function(){ box.innerHTML = ""; });
+}
+
 function identityAdmin(){
   skeleton(3);
   var qs = "?limit=" + IDQ.limit + "&offset=" + IDQ.offset
@@ -1034,6 +1090,13 @@ function identityAdmin(){
       el("div",{class:"c"},[ el("b",null,[String(s.unlinked)]), el("span",null,["未绑定"]) ]),
       el("div",{class:"c"},[ el("b",null,[String(s.conflict)]), el("span",null,["冲突"]) ])
     ]));
+
+    // The verification lane, stated rather than implied.
+    //
+    // HR_ADMIN can work this whole screen; what it cannot do is sign off its own
+    // consequential binding. Before this said so, an empty HR_VERIFIER slot just
+    // locked the module and gave nobody a way to find out why.
+    verificationLane(v);
 
     if(s.linked_but_unreachable > 0){
       v.appendChild(el("div",{class:"exc"},[
