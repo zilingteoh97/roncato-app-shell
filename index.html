@@ -179,7 +179,7 @@ var TOKEN = "";
 var DEV = null;
 var LARK_AUTH = "https://open.larksuite.com/open-apis/authen/v1/index";
 var API_BASE = "https://imctvlveatnwrajrdeje.supabase.co/functions/v1/roncato-mini-app";
-var BUILD = {"version":"2026-08-27.0311","commit":"4ef222f"};
+var BUILD = {"version":"2026-08-27.0326","commit":"4ce32a8"};
 var BASE = API_BASE || location.pathname.replace(/\/app\/?$/, "");
 
 var S = { me:null, tab:null, stack:[], busy:false };
@@ -839,6 +839,120 @@ function admin(ws){
   }).catch(fail);
 }
 
+// ── role administration ─────────────────────────────────
+//
+// This screen did not exist: ADMIN_ROLES opened an empty placeholder, so every
+// role change needed SQL and a person who could write it. Approving was
+// unreachable from the UI entirely, which meant a requested grant could be
+// created and then never take effect.
+//
+// It leads with what is waiting on a human, then what exists and grants nothing,
+// then the slots still open.
+function roleAdmin(){
+  skeleton(2);
+  api("GET","/api/admin/roles").then(function(r){
+    var slots = r.slots || [], un = r.unadmitted || [], sum = r.slot_summary || null;
+    var v = clear();
+
+    var pending = [];
+    slots.forEach(function(s){
+      (s.pending_grants||[]).forEach(function(p){
+        pending.push({ slot:s, grant:p });
+      });
+    });
+    var assigned = slots.filter(function(s){ return s.state === "ASSIGNED"; });
+    var open = slots.filter(function(s){ return s.actionable; });
+
+    v.appendChild(el("div",{class:"count"},[
+      el("div",{class:"c"},[ el("b",null,[String(pending.length)]), el("span",null,["等审批"]) ]),
+      el("div",{class:"c"},[ el("b",null,[String(assigned.length)]), el("span",null,["已就位"]) ])
+    ]));
+
+    // Waiting on a person. Shown first because it is the only thing here that
+    // somebody can finish in one tap.
+    if(pending.length){
+      v.appendChild(el("h3",{class:"sub"},["等审批"]));
+      pending.forEach(function(p){
+        var card = el("div",{class:"exc"},[
+          el("b",null,[ human(p.slot.role_code) + (p.slot.scope && p.slot.scope.outlet_code
+            ? (" · " + p.slot.scope.outlet_code) : " · 全公司") ]),
+          el("div",{class:"why"},[ "授予 " + p.grant.principal_id
+            + (p.grant.effective_from ? ("，" + p.grant.effective_from.slice(0,10) + " 起") : "") ]),
+          el("div",{class:"meta"},[ el("span",{class:"pill wait"},["PENDING"]) ])
+        ]);
+        if(p.grant.assignment_id){
+          card.appendChild(el("button",{class:"btn primary",onclick:function(){
+            api("POST","/api/admin/roles/" + encodeURIComponent(p.grant.assignment_id) + "/approve",{})
+              .then(function(){ toast("已批准并写入"); roleAdmin(); })
+              .catch(function(e){ toast(e.message); });
+          }},["批准"]));
+        }
+        v.appendChild(card);
+      });
+    }
+
+    // Rows that exist and confer nothing. Every assignment in this tenant is
+    // currently one of these, and before it was listed the only symptom was a
+    // screen that looked empty for no stated reason.
+    if(un.length){
+      v.appendChild(el("h3",{class:"sub",style:"margin-top:16px"},["存在但不授权"]));
+      un.forEach(function(u){
+        v.appendChild(el("div",{class:"card"},[
+          el("b",null,[ human(u.role_code) + (u.outlet_code ? (" · " + u.outlet_code) : "") ]),
+          el("div",{class:"why"},[ u.remedy ]),
+          el("div",{class:"meta"},[
+            el("span",{class:"pill warn"},[ u.reason ]),
+            el("span",{class:"pill"},[ u.principal_id ])
+          ])
+        ]));
+      });
+      v.appendChild(el("div",{class:"sub"},
+        ["这些行不会被改写。正确做法是新建一条写明 scope 的授权去取代它，而不是把旧行改成它从没说过的意思。"]));
+    }
+
+    if(assigned.length){
+      v.appendChild(el("h3",{class:"sub",style:"margin-top:16px"},["已就位"]));
+      assigned.forEach(function(s){
+        v.appendChild(el("div",{class:"card"},[
+          el("b",null,[ human(s.role_code) + (s.scope && s.scope.outlet_code
+            ? (" · " + s.scope.outlet_code) : " · 全公司") ]),
+          el("div",{class:"why"},[ "持有人 " + s.holder ]),
+          el("button",{class:"btn ghost",onclick:function(){ assignForm(s); }},["换人"])
+        ]));
+      });
+    }
+
+    if(sum && sum.outlet_scoped){
+      var os = sum.outlet_scoped;
+      v.appendChild(el("div",{class:"card"},[
+        el("h3",null,["门店角色覆盖"]),
+        el("div",{class:"meta",style:"margin-top:8px"},[
+          el("span",{class:"pill"},[ "该配 " + os.applicable ]),
+          el("span",{class:"pill ok"},[ "已配 " + os.satisfied ]),
+          el("span",{class:"pill warn"},[ "缺 " + os.missing ]),
+          el("span",{class:"pill"},[ "不适用 " + os.not_applicable ]),
+          el("span",{class:"pill"},[ "未知 " + os.applicability_unknown ])
+        ])
+      ]));
+    }
+
+    if(open.length){
+      v.appendChild(el("h3",{class:"sub",style:"margin-top:16px"},["还没有人"]));
+      open.slice(0,50).forEach(function(s){
+        v.appendChild(el("div",{class:"exc"},[
+          el("b",null,[ s.required_action ]),
+          el("button",{class:"btn primary",onclick:function(){ assignForm(s); }},["分配"])
+        ]));
+      });
+      if(open.length > 50){
+        v.appendChild(el("div",{class:"sub"},[ "另外还有 " + (open.length-50) + " 个，先处理上面的根因。" ]));
+      }
+    }
+
+    v.appendChild(el("button",{class:"btn ghost",style:"margin-top:16px",onclick:pop},["返回"]));
+  }).catch(fail);
+}
+
 function assignForm(slot){
   push("分配 " + human(slot.role_code), function(){
     var v = clear();
@@ -1086,6 +1200,7 @@ function connections(){
 
 var SCREENS = {
   ADMIN_IDENTITY: identityAdmin,
+  ADMIN_ROLES: roleAdmin,
   ADMIN_SUGGESTIONS: suggestions,
   ADMIN_CONNECTIONS: connections
 };
